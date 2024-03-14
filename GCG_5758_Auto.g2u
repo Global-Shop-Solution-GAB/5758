@@ -1,0 +1,460 @@
+Program.Sub.ScreenSU.Start
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+
+Variable.UDT.File.Define("LineData",String)
+Variable.UDT.File.Define("TradingPartner",String)
+Variable.UDT.File.Define("PO",String)
+Variable.UDT.File.Define("Cust",String)
+Variable.UDT.File.Define("Part",String)
+Variable.UDT.File.Define("ShipTo",String)
+Variable.UDT.File.Define("Type",String)
+Variable.UDT.File.Define("Error",String)
+Variable.UDT.File.Define("Company",String)
+Variable.uGlobal.uFile.Declare("File")
+
+Variable.Global.sSource.Declare(String)
+Variable.Global.sTOLfile.Declare(String)
+Variable.Global.sCLEfile.Declare(String)
+Variable.Global.sMCAfile.Declare(String)
+Variable.Global.sBKP.Declare(String)
+Variable.Global.sERRORfile.Declare(String)
+
+V.Global.sTargetCLE.Declare
+v.Global.sTargetTOL.Declare
+v.Global.sTargetMCA.Declare
+v.Global.sTargetCLEContent.Declare
+v.Global.sTargetTOLContent.Declare
+v.Global.sTargetMCAContent.Declare
+v.Global.sERRORContent.Declare
+v.Global.sRoot.Declare
+v.Global.sRoot.Set("\\Global\dts\fromdts")
+v.Global.sBckDir.Declare
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+' /=========================================================
+' 01/30/2014
+' JCT
+'
+' The corporate office will receive an an ea850 file that has information
+' for 3 different company codes.  This script will read the file and split the
+' lines into 3 separate files, one each for each of the 3 different companies.
+' =========================================================/
+'BN, Nov 10, 2019
+'Modified to work on Task Scheduler
+'Changed Target Locations and added Time Stamp for files
+
+F.Intrinsic.Control.Try
+	V.Local.sError.Declare
+	v.Local.sNow.Declare
+	v.Local.iMinuteUnload.Declare
+	v.Local.sFiles.Declare
+	v.Local.iCnt.Declare
+	v.Local.sHold.Declare
+
+	'Put in Task Scheduler to run hourly
+	
+	f.Intrinsic.UI.InvokeWaitDialog("Processing EDI Inbound...")
+	F.ODBC.Connection!ConA.OpenCompanyConnection(300)
+	f.Intrinsic.Control.CallSub("Check_And_Create_Custom_Folder")
+
+	'Get files list
+	f.Intrinsic.String.Build("{0}\",v.Global.sRoot,v.Local.sHold)
+	Function.Intrinsic.File.GetFileList(v.Local.sHold,v.Local.sFiles)
+	f.Intrinsic.Control.If(v.Local.sFiles.Trim,<>,"")
+		'Only process files with 2 dots
+		f.Intrinsic.String.split(v.Local.sFiles.Trim,":",v.Local.sFiles)
+		f.Intrinsic.Control.For(v.Local.iCnt,0,v.Local.sFiles.UBound,1)
+			
+			f.Intrinsic.String.Split(v.Local.sFiles(v.Local.iCnt).Trim,".",v.Local.sHold)
+			f.Intrinsic.Control.If(v.Local.sHold.UBound,>,1)
+				'Set Source File
+				f.Intrinsic.String.Build("{0}\{1}",v.Global.sRoot,v.Local.sFiles(v.Local.iCnt).Trim,v.Global.sSource)
+				'Build Time Stamp
+				f.Intrinsic.String.Build("{0}_{1}",v.Ambient.Date.FormatYYYYMMDD,v.Ambient.Now.FormatHHNNSS,v.Local.sNow)				
+				'Generate Target files
+				f.Intrinsic.String.Build("{0}\EA850CLE_{1}.CLE",v.Global.sTargetCLE,v.Local.sNow,v.Global.sCLEfile)
+				f.Intrinsic.String.Build("{0}\EA850TOL_{1}.TOL",v.Global.sTargetTOL,v.Local.sNow,v.Global.sTOLfile)
+				f.Intrinsic.String.Build("{0}\EA850MCA_{1}.MCA",v.Global.sTargetMCA,v.Local.sNow,v.Global.sMCAfile)
+				'Error files
+				f.Intrinsic.String.Build("{0}\Errors_{1}.txt",v.Global.sBckDir,v.Local.sNow,v.Global.sERRORfile)
+				'Backup file
+				f.Intrinsic.String.Build("{0}\{1}",v.Global.sBckDir,v.Local.sFiles(v.Local.iCnt).Trim,v.Global.sBKP)
+				'Reset Content
+				v.Global.sTargetCLEContent.Set("")
+				v.Global.sTargetTOLContent.Set("")
+				v.Global.sTargetMCAContent.Set("")
+				v.Global.sERRORContent.Set("")
+				'Read
+				F.Intrinsic.Control.CallSub("Readfile")
+				'Merge
+				F.Intrinsic.Control.CallSub("AppendingData","HOLD",V.Args.HOLD,"COMPANY",V.Args.COMPANY)
+				'Backup
+				F.Intrinsic.Control.CallSub("WriteFiles")
+				f.Intrinsic.UI.Sleep(2)
+			f.Intrinsic.Control.EndIf
+		f.Intrinsic.Control.Next(v.Local.iCnt)
+	f.Intrinsic.Control.EndIf
+	
+	f.Intrinsic.UI.CloseWaitDialog
+	f.Intrinsic.Control.CallSub("Unload")
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	f.Intrinsic.Control.If(v.Global.sCaller,=,"GSSMENU.EXE",or,v.Global.sCaller,=,"GABCE.EXE")
+		f.Intrinsic.UI.Msgbox(v.Local.sError)
+	f.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.CallSub("Write_GAB_Error_Log","sError",v.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.Check_And_Create_Custom_Folder.Start
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+	v.Local.bExist.Declare
+	v.Local.sFile.Declare
+	v.Local.sDir.Declare
+	
+	f.Intrinsic.String.Build("{0}\Custom",v.Caller.GlobalDir,v.Local.sDir)
+	f.Intrinsic.File.DirExists(v.Local.sDir,v.Local.bExist)
+	f.Intrinsic.Control.If(v.Local.bExist.Not)
+		f.Intrinsic.File.CreateDir(v.Local.sDir)
+	f.Intrinsic.Control.EndIf
+	
+	f.Intrinsic.String.Build("{0}\Custom\5758",v.Caller.GlobalDir,v.Local.sDir)
+	f.Intrinsic.File.DirExists(v.Local.sDir,v.Local.bExist)
+	f.Intrinsic.Control.If(v.Local.bExist.Not)
+		f.Intrinsic.File.CreateDir(v.Local.sDir)
+	f.Intrinsic.Control.EndIf
+	
+	f.Intrinsic.String.Build("{0}\Custom\5758\{1}",v.Caller.GlobalDir,v.Caller.CompanyCode,v.Local.sDir)
+	f.Intrinsic.File.DirExists(v.Local.sDir,v.Local.bExist)
+	f.Intrinsic.Control.If(v.Local.bExist.Not)
+		f.Intrinsic.File.CreateDir(v.Local.sDir)
+	f.Intrinsic.Control.EndIf	
+	
+	f.Intrinsic.String.Build("{0}\Custom\5758\{1}\Transaction Log",v.Caller.GlobalDir,v.Caller.CompanyCode,v.Local.sDir)
+	f.Intrinsic.File.DirExists(v.Local.sDir,v.Local.bExist)
+	f.Intrinsic.Control.If(v.Local.bExist.Not)
+		f.Intrinsic.File.CreateDir(v.Local.sDir)
+	f.Intrinsic.Control.EndIf	
+	
+	f.Intrinsic.String.Build("{0}\Custom\5758\{1}\GAB Error Log",v.Caller.GlobalDir,v.Caller.CompanyCode,v.Local.sDir)
+	f.Intrinsic.File.DirExists(v.Local.sDir,v.Local.bExist)
+	f.Intrinsic.Control.If(v.Local.bExist.Not)
+		f.Intrinsic.File.CreateDir(v.Local.sDir)
+	f.Intrinsic.Control.EndIf	
+	
+	f.Intrinsic.String.Build("{0}\History",v.Global.sRoot,v.Global.sBckDir)
+	F.Intrinsic.File.DirExists(v.Global.sBckDir,V.Local.bExist)
+	F.Intrinsic.Control.If(V.Local.bExist,=,False)
+		F.Intrinsic.File.CreateDir(v.Global.sBckDir)
+	F.Intrinsic.Control.EndIf	
+	
+	f.Intrinsic.String.Build("{0}\Files\EDI",v.Caller.GlobalDir,v.Local.sDir)
+	f.Intrinsic.File.DirExists(v.Local.sDir,v.Local.bExist)
+	f.Intrinsic.Control.If(v.Local.bExist.Not)
+		f.Intrinsic.File.CreateDir(v.Local.sDir)
+	f.Intrinsic.Control.EndIf	
+	
+	f.Intrinsic.String.Build("{0}\Files\EDI\CLE",v.Caller.GlobalDir,v.Global.sTargetCLE)
+	f.Intrinsic.File.DirExists(v.Global.sTargetCLE,v.Local.bExist)
+	f.Intrinsic.Control.If(v.Local.bExist.Not)
+		f.Intrinsic.File.CreateDir(v.Global.sTargetCLE)
+	f.Intrinsic.Control.EndIf	
+
+	f.Intrinsic.String.Build("{0}\Files\EDI\CLE\Inbound",v.Caller.GlobalDir,v.Global.sTargetCLE)
+	f.Intrinsic.File.DirExists(v.Global.sTargetCLE,v.Local.bExist)
+	f.Intrinsic.Control.If(v.Local.bExist.Not)
+		f.Intrinsic.File.CreateDir(v.Global.sTargetCLE)
+	f.Intrinsic.Control.EndIf	
+	
+	f.Intrinsic.String.Build("{0}\Files\EDI\TOL",v.Caller.GlobalDir,v.Global.sTargetTOL)
+	f.Intrinsic.File.DirExists(v.Global.sTargetTOL,v.Local.bExist)
+	f.Intrinsic.Control.If(v.Local.bExist.Not)
+		f.Intrinsic.File.CreateDir(v.Global.sTargetTOL)
+	f.Intrinsic.Control.EndIf	
+
+	f.Intrinsic.String.Build("{0}\Files\EDI\TOL\Inbound",v.Caller.GlobalDir,v.Global.sTargetTOL)
+	f.Intrinsic.File.DirExists(v.Global.sTargetTOL,v.Local.bExist)
+	f.Intrinsic.Control.If(v.Local.bExist.Not)
+		f.Intrinsic.File.CreateDir(v.Global.sTargetTOL)
+	f.Intrinsic.Control.EndIf	
+	
+	f.Intrinsic.String.Build("{0}\Files\EDI\MCA",v.Caller.GlobalDir,v.Global.sTargetMCA)
+	f.Intrinsic.File.DirExists(v.Global.sTargetMCA,v.Local.bExist)
+	f.Intrinsic.Control.If(v.Local.bExist.Not)
+		f.Intrinsic.File.CreateDir(v.Global.sTargetMCA)
+	f.Intrinsic.Control.EndIf	
+
+	f.Intrinsic.String.Build("{0}\Files\EDI\MCA\Inbound",v.Caller.GlobalDir,v.Global.sTargetMCA)
+	f.Intrinsic.File.DirExists(v.Global.sTargetMCA,v.Local.bExist)
+	f.Intrinsic.Control.If(v.Local.bExist.Not)
+		f.Intrinsic.File.CreateDir(v.Global.sTargetMCA)
+	f.Intrinsic.Control.EndIf	
+	
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: 5758 {0}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}GAB Version: {5}}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	f.Intrinsic.Control.CallSub("Write_GAB_Error_Log","sError",v.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry	
+Program.Sub.Check_And_Create_Custom_Folder.End
+
+Program.Sub.Write_GAB_Error_Log.Start
+'Parameters: sError
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+	v.Local.sFile.Declare
+	v.Local.sContent.Declare
+	
+	f.Intrinsic.Control.If(v.Global.sCaller,=,"GSSMENU.EXE",or,v.Global.sCaller,=,"GABCE.EXE")
+		f.Intrinsic.UI.Msgbox(v.Args.sError)
+	f.Intrinsic.Control.EndIf
+	
+	'Write error log file
+	f.Intrinsic.String.Build("User: {1}{0}Terminal: {2}{0}",v.Ambient.NewLine,v.Caller.User,v.Caller.Terminal,v.Local.sContent)
+	f.Intrinsic.String.Build("{0}{1}{2}{3}",v.Local.sContent,v.Ambient.Now,v.Ambient.NewLine,v.Args.sError,v.Local.sContent)
+	f.Intrinsic.String.Build("{0}\Custom\5758\{1}\GAB Error Log\{2}_{3}_{4}_{5}.txt",v.Caller.GlobalDir,v.Caller.CompanyCode,v.Caller.User,v.Caller.Terminal,v.Ambient.Date.FormatYYYYMMDD,v.Ambient.Now.FormatHHNNSS,v.Local.sFile)
+	f.Intrinsic.File.String2File(v.Local.sFile,v.Local.sContent)
+	
+f.Intrinsic.Control.Catch
+	f.Intrinsic.Control.CallSub("Unload")
+f.Intrinsic.Control.EndTry
+Program.Sub.Write_GAB_Error_Log.End
+
+Program.Sub.Unload.Start
+f.Intrinsic.Control.Try
+	V.Local.sError.Declare
+	
+	f.Intrinsic.Control.If(v.ODBC.ConA.State,=,1)
+		F.ODBC.Connection!ConA.close
+	f.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	f.Intrinsic.Control.If(v.Global.sCaller,=,"GSSMENU.EXE",or,v.Global.sCaller,=,"GABCE.EXE")
+		f.Intrinsic.UI.Msgbox(v.Local.sError)
+	f.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.CallSub("Write_GAB_Error_Log","sError",v.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.Unload.End
+
+Program.Sub.readFile.Start
+f.Intrinsic.Control.Try
+	V.Local.sError.Declare(String)
+	
+	V.Local.sRet.Declare(String)
+	V.Local.iFor.Declare(Long)
+	V.Local.sLineType.Declare(String)
+	V.Local.iHpos.Declare(Long)
+	V.Local.iLpos.Declare(Long)
+	V.Local.iHlen.Declare(Long)
+	V.Local.iLlen.Declare(Long)
+	V.Local.iMin.Declare(Long)
+	V.Local.iMax.Declare(Long)
+	V.Local.sHold.Declare(String)
+	V.Local.sCompany.Declare(String)
+	V.Local.sShipTo.Declare(String)
+	
+	' the EA850 file is a positional file.  Prepare to split values based on position
+	'Header
+	F.Intrinsic.String.Split("1*!*36*!*51*!*54*!*55*!*63*!*71*!*88*!*96*!*97*!*122*!*130*!*138*!*139*!*140*!*143*!*146*!*147*!*157*!*167*!*175*!*511*!*512","*!*",V.Local.iHpos)
+	F.Intrinsic.String.Split("35*!*15*!*3*!*1*!*8*!*8*!*17*!*8*!*1*!*25*!*8*!*8*!*1*!*1*!*3*!*3*!*1*!*10*!*10*!*8*!*336*!*1*!*1","*!*",V.Local.iHlen)
+	' Line
+	F.Intrinsic.String.Split("1*!*36*!*51*!*54*!*55*!*75*!*77*!*89*!*91*!*104*!*134*!*164*!*194*!*202*!*210*!*218*!*226*!*229*!*230*!*231*!*266*!*267*!*275*!*276*!*293*!*310*!*311*!*331*!*351*!*352*!*355*!*385*!*415*!*445*!*475*!*483*!*484*!*485*!*486*!*511*!*512","*!*",V.Local.iLpos)
+	F.Intrinsic.String.Split("35*!*15*!*3*!*1*!*20*!*2*!*12*!*2*!*13*!*30*!*30*!*30*!*8*!*8*!*8*!*8*!*3*!*1*!*1*!*35*!*1*!*8*!*1*!*17*!*17*!*1*!*20*!*20*!*1*!*3*!*30*!*30*!*30*!*30*!*8*!*1*!*1*!*1*!*25*!*1*!*1","*!*",V.Local.iLlen)
+
+	' read the file to a string
+	F.Intrinsic.File.File2String(V.Global.sSource,V.Local.sRet)
+	' load the lines
+	F.Intrinsic.Variable.LoadUDTFromString(V.uGlobal.uFile,"LineData",V.Local.sRet,V.Ambient.NewLine,"",False,1000)
+	' get rid of blank lines
+	F.Intrinsic.Variable.UDTMultiFlag(V.uGlobal.uFile!LineData,"")
+	F.Intrinsic.Variable.UDTDeleteFlagged(V.uGlobal.uFile)
+	F.Intrinsic.Math.Add(V.uGlobal.uFile!LineData.UBound,1,V.Local.iMax)
+	
+	' Split each line
+	' will read specific information from the H and 1 lines, but otherwse just copy the line
+	F.Intrinsic.Control.For(V.Local.iFor,V.uGlobal.uFile!LineData.LBound,V.uGlobal.uFile!LineData.UBound,1)
+		F.Intrinsic.Math.Add(V.Local.iFor,1,V.Local.iMin)
+		F.Intrinsic.String.Mid(V.uGlobal.uFile(v.Local.iFor)!LineData,511,1,V.Local.sLineType)
+	
+		F.Intrinsic.Control.SelectCase(V.Local.sLineType)
+		' new Header means new segment of data
+		F.Intrinsic.Control.Case("H")
+			' if a segment has been read, cal the next sub to write it to the correct file
+			F.Intrinsic.Control.If(V.Local.sHold.Trim,<>,"")
+				F.Intrinsic.Control.CallSub(AppendingData,"HOLD",V.Local.sHold,"COMPANY",V.Local.sCompany)
+			F.Intrinsic.Control.EndIf
+			' reset the re-used variables
+			V.Local.sHold.Set("")
+			V.Local.sCompany.Set("")
+			' build the Hold data
+			F.Intrinsic.String.Build("{0}{1}",V.Local.sHold,V.uGlobal.uFile(v.Local.iFor)!LineData,V.Local.sHold)
+			' get the shipt to from the H record
+			F.Intrinsic.String.PositionalSplit(V.uGlobal.uFile(v.Local.iFor)!LineData,V.Local.iHPos,V.Local.iHlen,V.Local.sRet)
+			V.Local.sShipTo.Set(V.Local.sRet(6))
+	
+		' need more information from the 1 (Line)
+		F.Intrinsic.Control.Case("1")
+			F.Intrinsic.String.PositionalSplit(V.uGlobal.uFile(v.Local.iFor)!LineData,V.Local.iLPos,V.Local.iLlen,V.Local.sRet)
+			' need to fnd the right company code, to know which file to write to
+			F.Intrinsic.Control.If(V.Local.sCompany.Trim,=,"")
+				F.Intrinsic.Control.CallSub(Splitdata,"FOR",V.Local.iFor,"PART",V.Local.sRet(4).Trim,"TP",V.Local.sRet(0).Trim,"SHIPTO",V.Local.sShipTo.Trim)
+				V.Local.sCompany.Set(V.Args.COMPANY)
+			F.Intrinsic.Control.EndIf
+			' build the Hold data
+			F.Intrinsic.String.Build("{0}{1}{2}",V.Local.sHold,V.Ambient.NewLine,V.uGlobal.uFile(v.Local.iFor)!LineData,V.Local.sHold)
+	
+		F.Intrinsic.Control.CaseElse
+			' build the Hold data
+			F.Intrinsic.String.Build("{0}{1}{2}",V.Local.sHold,V.Ambient.NewLine,V.uGlobal.uFile(v.Local.iFor)!LineData,V.Local.sHold)
+		F.Intrinsic.Control.EndSelect
+	F.Intrinsic.Control.Next(V.Local.iFor)
+	
+	' need to pass these back to pick up the last segment of lines
+	F.Intrinsic.Variable.AddRV("HOLD",V.Local.sHold)
+	F.Intrinsic.Variable.AddRV("COMPANY",V.Local.sCompany)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	f.Intrinsic.Control.If(v.Global.sCaller,=,"GSSMENU.EXE",or,v.Global.sCaller,=,"GABCE.EXE")
+		f.Intrinsic.UI.Msgbox(v.Local.sError)
+	f.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.CallSub("Write_GAB_Error_Log","sError",v.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.readFile.End
+
+Program.Sub.splitData.Start
+f.Intrinsic.Control.Try
+	V.Local.sError.Declare(String)
+	V.Local.sSel.Declare(String)
+	V.Local.sRet.Declare(String)	
+	
+	' get customer
+	F.Intrinsic.String.Concat("select Customer from Cust_Xref where ID ='",V.Args.TP,"' and Loc ='",V.Args.SHIPTO,"' ",V.Local.sSel)
+	F.ODBC.Connection!ConA.ExecuteAndReturn(V.Local.sSel,V.Local.sRet)
+	
+	F.Intrinsic.String.Concat("select Part, User_Defined_Part from Inv_Cross_Ref where Customer = '",V.Local.sRet,"' and Customer_Part = '",V.Args.PART,"' ",V.Local.sSel)
+	F.ODBC.Connection!ConA.ExecuteAndReturn(V.Local.sSel,V.Local.sRet)
+	F.Intrinsic.String.Split(V.Local.sRet,"*!*",V.Local.sRet)
+	V.Local.sRet.RedimPreserve(0,1)
+	
+	' return the company code so we know which file to write to
+	F.Intrinsic.Variable.AddRV("COMPANY",V.Local.sRet(1).Trim)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	f.Intrinsic.Control.If(v.Global.sCaller,=,"GSSMENU.EXE",or,v.Global.sCaller,=,"GABCE.EXE")
+		f.Intrinsic.UI.Msgbox(v.Local.sError)
+	f.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.CallSub("Write_GAB_Error_Log","sError",v.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.splitData.End
+
+Program.Sub.AppendingData.Start
+f.Intrinsic.Control.Try
+	V.Local.sError.Declare(String)
+	V.Local.sCompany.Declare(String)
+	V.Local.iHndl.Declare(Long)
+	
+	' if the company is not any of the 3 (CLE, MCA, TOL), the text will be written to the error log
+	V.Local.sCompany.Set(V.Args.COMPANY)
+	
+	F.Intrinsic.Control.SelectCase(V.Local.sCompany)
+		F.Intrinsic.Control.Case("CLE")
+			f.Intrinsic.Control.If(v.Global.sTargetCLEContent,=,"")
+				v.Global.sTargetCLEContent.Set(v.Args.HOLD.Trim)
+			f.Intrinsic.Control.Else
+				f.Intrinsic.String.Build("{0}{1}{2}",v.Global.sTargetCLEContent,v.Ambient.NewLine,v.Args.HOLD,v.Global.sTargetCLEContent)
+			f.Intrinsic.Control.EndIf			
+		F.Intrinsic.Control.Case("MCA")
+			f.Intrinsic.Control.If(v.Global.sTargetMCAContent,=,"")
+				v.Global.sTargetMCAContent.Set(v.Args.HOLD.Trim)
+			f.Intrinsic.Control.Else
+				f.Intrinsic.String.Build("{0}{1}{2}",v.Global.sTargetMCAContent,v.Ambient.NewLine,v.Args.HOLD,v.Global.sTargetMCAContent)
+			f.Intrinsic.Control.EndIf			
+		F.Intrinsic.Control.Case("TOL")
+			f.Intrinsic.Control.If(v.Global.sTargetTOLContent,=,"")
+				v.Global.sTargetTOLContent.Set(v.Args.HOLD.Trim)
+			f.Intrinsic.Control.Else
+				f.Intrinsic.String.Build("{0}{1}{2}",v.Global.sTargetTOLContent,v.Ambient.NewLine,v.Args.HOLD,v.Global.sTargetTOLContent)
+			f.Intrinsic.Control.EndIf			
+		F.Intrinsic.Control.CaseElse
+			f.Intrinsic.Control.If(v.Global.sERRORContent,=,"")
+				v.Global.sERRORContent.Set(v.Args.HOLD.Trim)
+			f.Intrinsic.Control.Else
+				f.Intrinsic.String.Build("{0}{1}{2}",v.Global.sERRORContent,v.Ambient.NewLine,v.Args.HOLD,v.Global.sERRORContent)
+			f.Intrinsic.Control.EndIf		
+	F.Intrinsic.Control.EndSelect
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	f.Intrinsic.Control.If(v.Global.sCaller,=,"GSSMENU.EXE",or,v.Global.sCaller,=,"GABCE.EXE")
+		f.Intrinsic.UI.Msgbox(v.Local.sError)
+	f.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.CallSub("Write_GAB_Error_Log","sError",v.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.AppendingData.End
+
+Program.Sub.WriteFiles.Start
+f.Intrinsic.Control.Try
+	V.Local.sError.Declare(String)
+	V.Local.iRet.Declare(Long)
+	
+	'if everything goes well, move the file to the backup/history directory
+	F.Intrinsic.File.MoveFile(V.Global.sSource,V.Global.sBKP,V.Local.iRet)
+	'Write files
+	f.Intrinsic.Control.If(v.Global.sTargetCLEContent.Trim,<>,"")
+		f.Intrinsic.File.String2File(v.Global.sCLEfile,v.Global.sTargetCLEContent)
+	f.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.If(v.Global.sTargetMCAContent.Trim,<>,"")
+		f.Intrinsic.File.String2File(v.Global.sMCAfile,v.Global.sTargetMCAContent)
+	f.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.If(v.Global.sTargetTOLContent.Trim,<>,"")
+		f.Intrinsic.File.String2File(v.Global.sTOLfile,v.Global.sTargetTOLContent)
+	f.Intrinsic.Control.EndIf	
+	f.Intrinsic.Control.If(v.Global.sERRORContent.Trim,<>,"")
+		f.Intrinsic.File.String2File(v.Global.sERRORfile,v.Global.sERRORContent)
+	f.Intrinsic.Control.EndIf	
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	f.Intrinsic.Control.If(v.Global.sCaller,=,"GSSMENU.EXE",or,v.Global.sCaller,=,"GABCE.EXE")
+		f.Intrinsic.UI.Msgbox(v.Local.sError)
+	f.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.CallSub("Write_GAB_Error_Log","sError",v.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.WriteFiles.End
+
+
+Program.Sub.Comments.Start
+	'Put in Task Scheduler to run hourly
+		'Otherwise use this constructure to handle repeat
+		
+	'F.Intrinsic.Control.Do
+	'	f.Intrinsic.String.Format(v.Ambient.Now,"HHMMSS",v.Local.sNow)
+	'	v.Local.iMinuteUnload.Set(v.Local.sNow.left4)
+	'	f.Intrinsic.Control.If(v.Local.iMinuteUnload,>=,2300)
+	'		f.Intrinsic.Control.CallSub("Unload")
+	'	f.Intrinsic.Control.Else		
+	'		'Loading
+	'		
+	'		'This is to run once if lauched from a custom menu item with switch 'O'
+	'		F.Intrinsic.Control.If(V.Caller.Switches,=,"O")
+	'				f.Intrinsic.Control.CallSub("Unload")
+	'		F.Intrinsic.Control.EndIf
+	'		'10 minutes
+	'		F.Intrinsic.UI.Sleep(1200)
+	'	f.Intrinsic.Control.EndIf	'
+Program.Sub.Comments.End
